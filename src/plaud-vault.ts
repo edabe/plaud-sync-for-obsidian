@@ -35,6 +35,17 @@ function normalizeFolder(folder: string): string {
 	return folder.replace(/\/+$/, '').trim() || 'Plaud';
 }
 
+function sanitizeFolderName(folderName: string): string {
+	// Replace invalid characters for file systems (Windows, macOS, Linux)
+	// Invalid: < > : " / \ | ? * and control characters
+	return folderName
+		.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/^\.+/, '') // Remove leading dots
+		.replace(/\.+$/, ''); // Remove trailing dots
+}
+
 function slugify(value: string): string {
 	const normalized = value
 		.toLowerCase()
@@ -127,8 +138,9 @@ export async function upsertPlaudNote(input: UpsertPlaudNoteInput): Promise<Upse
 	const baseFolder = normalizeFolder(input.syncFolder);
 	
 	// Determine target folder: base folder + optional subfolder
+	// Sanitize folder name to remove invalid characters (like colons)
 	const targetFolder = input.folderName && input.folderName.trim()
-		? joinPath(baseFolder, input.folderName.trim())
+		? joinPath(baseFolder, sanitizeFolderName(input.folderName.trim()))
 		: baseFolder;
 	
 	await input.vault.ensureFolder(targetFolder);
