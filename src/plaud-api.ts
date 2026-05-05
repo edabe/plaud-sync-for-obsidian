@@ -19,12 +19,21 @@ export interface PlaudFileSummary {
 	file_id?: string;
 	is_trash?: boolean;
 	start_time?: number;
+	filetag_id_list?: string[];
 }
 
 export interface PlaudFileDetail {
 	id: string;
 	file_id?: string;
+	filetag_id_list?: string[];
 	[key: string]: unknown;
+}
+
+export interface PlaudFiletag {
+	id: string;
+	name: string;
+	icon?: string;
+	color?: string;
 }
 
 type PlaudEnvelope<T> = {
@@ -48,6 +57,7 @@ export type PlaudRequestFn = (request: PlaudRequest) => Promise<PlaudRequestResu
 export interface PlaudApiClient {
 	listFiles(): Promise<PlaudFileSummary[]>;
 	getFileDetail(fileId: string): Promise<PlaudFileDetail>;
+	listFiletags(): Promise<PlaudFiletag[]>;
 }
 
 export interface CreatePlaudApiClientOptions {
@@ -171,6 +181,33 @@ function extractListPayload(json: unknown): PlaudFileSummary[] {
 	throw new PlaudApiError('invalid_response', 'Plaud file list payload must be an array.');
 }
 
+function extractFiletagListPayload(json: unknown): PlaudFiletag[] {
+	if (Array.isArray(json)) {
+		return json as PlaudFiletag[];
+	}
+
+	if (!isRecord(json)) {
+		throw new PlaudApiError('invalid_response', 'Plaud filetag list payload is malformed.');
+	}
+
+	const envelope = json as PlaudEnvelope<PlaudFiletag[]> & {data_filetag_list?: unknown};
+	assertSuccessStatusIfPresent(envelope);
+
+	if (Array.isArray(envelope.payload)) {
+		return envelope.payload;
+	}
+
+	if (Array.isArray(envelope.data_filetag_list)) {
+		return envelope.data_filetag_list as PlaudFiletag[];
+	}
+
+	if (Array.isArray(envelope.data)) {
+		return envelope.data as PlaudFiletag[];
+	}
+
+	throw new PlaudApiError('invalid_response', 'Plaud filetag list payload must be an array.');
+}
+
 function normalizeFileDetail(raw: unknown): PlaudFileDetail {
 	if (!isRecord(raw)) {
 		throw new PlaudApiError('invalid_response', 'Plaud file detail payload is malformed.');
@@ -243,6 +280,19 @@ export function createPlaudApiClient(options: CreatePlaudApiClientOptions): Plau
 			});
 
 			return extractDetailPayload(json);
+		},
+
+		async listFiletags(): Promise<PlaudFiletag[]> {
+			const json = await requestJson(request, {
+				url: `${apiDomain}/filetag/`,
+				method: 'GET',
+				headers: {
+					Authorization: `Bearer ${token}`
+				},
+				throw: false
+			});
+
+			return extractFiletagListPayload(json);
 		}
 	};
 }

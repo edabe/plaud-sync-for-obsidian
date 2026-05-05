@@ -173,7 +173,8 @@ export default class PlaudSyncPlugin extends Plugin {
 				}
 
 				return detail;
-			}
+			},
+			listFiletags: async () => this.retryApiCall('sync.list_filetags', async () => api.listFiletags())
 		};
 
 		return runPlaudSync({

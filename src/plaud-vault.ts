@@ -22,6 +22,7 @@ export interface UpsertPlaudNoteInput {
 	title: string;
 	date: string;
 	markdown: string;
+	folderName?: string;
 }
 
 export interface UpsertPlaudNoteResult {
@@ -123,11 +124,18 @@ function resolveAvailablePath(folder: string, initialFileName: string, existingP
 }
 
 export async function upsertPlaudNote(input: UpsertPlaudNoteInput): Promise<UpsertPlaudNoteResult> {
-	const folder = normalizeFolder(input.syncFolder);
-	await input.vault.ensureFolder(folder);
+	const baseFolder = normalizeFolder(input.syncFolder);
+	
+	// Determine target folder: base folder + optional subfolder
+	const targetFolder = input.folderName && input.folderName.trim()
+		? joinPath(baseFolder, input.folderName.trim())
+		: baseFolder;
+	
+	await input.vault.ensureFolder(targetFolder);
 
-	const existingPaths = await input.vault.listMarkdownFiles(folder);
-	const existingSet = new Set(existingPaths);
+	// Search for existing file in ALL subfolders of base folder
+	const allPaths = await input.vault.listMarkdownFiles(baseFolder);
+	const existingSet = new Set(allPaths);
 
 	const desiredFileName = buildPlaudFilename({
 		filenamePattern: input.filenamePattern,
@@ -135,35 +143,39 @@ export async function upsertPlaudNote(input: UpsertPlaudNoteInput): Promise<Upse
 		title: input.title
 	});
 
-	for (const path of existingPaths) {
+	for (const path of allPaths) {
 		const fileId = extractFrontmatterFileId(await input.vault.read(path));
 		if (fileId === input.fileId) {
 			if (!input.updateExisting) {
 				return {action: 'skipped', path};
 			}
 
-			// Extract current filename from path
+			// Extract current filename and folder from path
 			const currentFileName = path.split('/').pop() || '';
+			const currentFolder = path.substring(0, path.lastIndexOf('/'));
 			
-			// Check if filename needs to be updated
-			if (currentFileName !== desiredFileName) {
+			// Check if file needs to be moved to a different folder or renamed
+			const needsMove = currentFolder !== targetFolder;
+			const needsRename = currentFileName !== desiredFileName;
+			
+			if (needsMove || needsRename) {
 				// Remove old path from set and add new path
 				existingSet.delete(path);
-				const newPath = resolveAvailablePath(folder, desiredFileName, existingSet);
+				const newPath = resolveAvailablePath(targetFolder, desiredFileName, existingSet);
 				
-				// Rename the file and update content
+				// Rename/move the file and update content
 				await input.vault.rename(path, newPath);
 				await input.vault.write(newPath, input.markdown);
 				return {action: 'renamed', path: newPath, oldPath: path};
 			}
 
-			// Same filename, just update content
+			// Same location and filename, just update content
 			await input.vault.write(path, input.markdown);
 			return {action: 'updated', path};
 		}
 	}
 
-	const path = resolveAvailablePath(folder, desiredFileName, existingSet);
+	const path = resolveAvailablePath(targetFolder, desiredFileName, existingSet);
 
 	await input.vault.create(path, input.markdown);
 	return {action: 'created', path};

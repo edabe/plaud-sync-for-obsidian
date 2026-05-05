@@ -7,6 +7,7 @@ export interface NormalizedPlaudDetail {
 	summary: string;
 	highlights: string[];
 	transcript: string;
+	filetagId: string;
 	raw: Record<string, unknown>;
 }
 
@@ -225,6 +226,17 @@ function extractTranscript(detail: Record<string, unknown>): string {
 	return '';
 }
 
+function extractFiletagId(detail: Record<string, unknown>): string {
+	const filetagList = detail.filetag_id_list;
+	if (Array.isArray(filetagList) && filetagList.length > 0) {
+		const firstTag = filetagList[0];
+		if (typeof firstTag === 'string' && firstTag.trim()) {
+			return firstTag.trim();
+		}
+	}
+	return '';
+}
+
 export function normalizePlaudDetail(raw: unknown): NormalizedPlaudDetail {
 	const detail = isRecord(raw) ? raw : {};
 
@@ -241,6 +253,7 @@ export function normalizePlaudDetail(raw: unknown): NormalizedPlaudDetail {
 		summary: extractSummary(detail),
 		highlights: extractHighlights(detail),
 		transcript: extractTranscript(detail),
+		filetagId: extractFiletagId(detail),
 		raw: detail
 	};
 }
