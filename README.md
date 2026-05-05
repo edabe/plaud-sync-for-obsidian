@@ -6,13 +6,26 @@ Sync your [Plaud](https://plaud.ai/) voice recordings into Markdown notes inside
 
 ## Features
 
+### Core Sync Capabilities
 - **Incremental sync** — only fetches recordings newer than your last sync checkpoint; never creates duplicates
+- **Smart change detection** — detects both content changes (via edit_time) and folder changes efficiently
+- **Folder organization** — automatically organizes notes into subfolders matching your Plaud folder structure
+- **Filename synchronization** — keeps note filenames in sync with Plaud recording titles (customizable pattern)
 - **Rich Markdown notes** — renders title, date, duration, AI summary, key highlights, and full transcript with speaker labels
 - **Idempotent updates** — uses a stable `file_id` in frontmatter to update existing notes in place
+
+### Filtering & Organization
+- **Exclude empty notes** — option to skip recordings without transcription
+- **Trash filtering** — recordings you deleted in Plaud are automatically skipped
+- **Folder sync** — notes are organized in subfolders matching Plaud's folder structure
+- **Automatic folder moves** — when you rename or move folders in Plaud, notes are automatically relocated in Obsidian
+
+### Reliability & Security
 - **Secure token storage** — stores your Plaud session token via Obsidian's Secret Storage API (local fallback if unavailable)
 - **Retry with backoff** — transient failures (network, rate-limit, 5xx) are retried automatically; permanent failures (auth, bad response) are surfaced immediately
-- **Trash filtering** — recordings you deleted in Plaud are automatically skipped
+- **Robust error handling** — detailed logging and error messages for troubleshooting
 - **Content hydration** — fetches full transcript and AI summary content from Plaud's signed URLs
+- **Scalable** — efficiently handles 1000+ recordings with minimal overhead
 
 ## Requirements
 
@@ -63,10 +76,11 @@ Open **Settings → Community plugins → Plaud Sync**:
 |---------|---------|-------------|
 | Plaud token | — | Your session token (stored securely, not in plugin settings) |
 | API domain | `https://api.plaud.ai` | API endpoint; change only if your account is in a different region |
-| Sync folder | `Plaud` | Vault folder where notes are created |
+| Sync folder | `Plaud` | Vault folder where notes are created (subfolders created automatically for Plaud folders) |
 | Filename pattern | `plaud-{date}-{title}` | Pattern for new note filenames (`{date}` and `{title}` are replaced) |
 | Sync on startup | `true` | Automatically sync when Obsidian starts |
-| Update existing notes | `true` | Overwrite notes that already exist (matched by `file_id`) |
+| Update existing notes | `true` | Overwrite notes that already exist (matched by `file_id`); also enables filename and folder synchronization |
+| Exclude notes without transcription | `false` | Skip recordings that haven't been transcribed yet |
 
 ## Usage
 
@@ -81,12 +95,15 @@ Open the command palette (`Ctrl/Cmd+P`) and search for:
 
 ### How sync works
 
-1. Fetches the full recording list from Plaud
-2. Filters out trashed recordings
-3. Selects candidates where `start_time > lastSyncAtMs`
-4. For each candidate, fetches detail + content (transcript, AI summary)
-5. Creates or updates the Markdown note in your sync folder
-6. Advances the `lastSyncAtMs` checkpoint only after the full batch succeeds
+1. **Fetch metadata** — Retrieves folder list and recording list from Plaud (up to 99,999 recordings)
+2. **Detect changes** — Identifies recordings that changed (via `edit_time`) or have folder mismatches
+3. **Filter** — Excludes trashed recordings and optionally recordings without transcription
+4. **Fetch details** — For each selected recording, fetches full detail + content (transcript, AI summary)
+5. **Organize** — Creates or updates Markdown notes in appropriate folders matching Plaud structure
+6. **Sync metadata** — Updates filenames and folders when they change in Plaud (if "Update existing notes" is enabled)
+7. **Checkpoint** — Advances the `lastSyncAtMs` checkpoint after successful sync
+
+**Efficiency:** Only processes recordings that actually changed. Folder change detection adds ~3 seconds overhead for 1000+ recordings.
 
 If sync is already running (startup or manual), additional attempts are blocked until the current run finishes.
 
