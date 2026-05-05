@@ -3,6 +3,7 @@ export interface PlaudPluginSettings {
 	syncFolder: string;
 	syncOnStartup: boolean;
 	updateExisting: boolean;
+	excludeWithoutTranscript: boolean;
 	filenamePattern: string;
 	lastSyncAtMs: number;
 }
@@ -12,6 +13,7 @@ export const DEFAULT_SETTINGS: PlaudPluginSettings = {
 	syncFolder: 'Plaud',
 	syncOnStartup: true,
 	updateExisting: true,
+	excludeWithoutTranscript: false,
 	filenamePattern: 'plaud-{date}-{title}',
 	lastSyncAtMs: 0
 };
@@ -49,6 +51,7 @@ export function normalizeSettings(raw: unknown): PlaudPluginSettings {
 		syncFolder: readString(persisted.syncFolder, DEFAULT_SETTINGS.syncFolder),
 		syncOnStartup: readBoolean(persisted.syncOnStartup, DEFAULT_SETTINGS.syncOnStartup),
 		updateExisting: readBoolean(persisted.updateExisting, DEFAULT_SETTINGS.updateExisting),
+		excludeWithoutTranscript: readBoolean(persisted.excludeWithoutTranscript, DEFAULT_SETTINGS.excludeWithoutTranscript),
 		filenamePattern: readString(persisted.filenamePattern, DEFAULT_SETTINGS.filenamePattern),
 		lastSyncAtMs: readTimestampMs(persisted.lastSyncAtMs, DEFAULT_SETTINGS.lastSyncAtMs)
 	};

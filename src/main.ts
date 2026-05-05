@@ -160,6 +160,7 @@ export default class PlaudSyncPlugin extends Plugin {
 				syncFolder: this.settings.syncFolder,
 				filenamePattern: this.settings.filenamePattern,
 				updateExisting: this.settings.updateExisting,
+				excludeWithoutTranscript: this.settings.excludeWithoutTranscript,
 				lastSyncAtMs: this.settings.lastSyncAtMs
 			},
 			saveCheckpoint: async (nextLastSyncAtMs) => {

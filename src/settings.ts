@@ -95,6 +95,16 @@ export class PlaudSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Exclude notes without transcription')
+			.setDesc('Skip syncing recordings that have not been transcribed yet.')
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.excludeWithoutTranscript)
+				.onChange(async (value) => {
+					this.plugin.settings.excludeWithoutTranscript = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Filename pattern')
 			.setDesc('Pattern used for new synced files.')
 			.addText((text) => text

@@ -244,3 +244,7 @@ export function normalizePlaudDetail(raw: unknown): NormalizedPlaudDetail {
 		raw: detail
 	};
 }
+
+export function hasTranscript(detail: NormalizedPlaudDetail): boolean {
+	return detail.transcript.trim().length > 0;
+}

@@ -6,6 +6,7 @@ export interface PlaudSyncSettings {
 	syncFolder: string;
 	filenamePattern: string;
 	updateExisting: boolean;
+	excludeWithoutTranscript: boolean;
 	lastSyncAtMs: number;
 }
 
@@ -131,6 +132,18 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 		try {
 			const detail = await input.api.getFileDetail(fileId);
 			const normalized = input.normalizeDetail(detail);
+			
+			// Skip notes without transcription if the setting is enabled
+			if (input.settings.excludeWithoutTranscript && !normalized.transcript.trim()) {
+				skipped += 1;
+				checkpointCandidate = Math.max(
+					checkpointCandidate,
+					normalizeTimestampMs(summary.start_time),
+					normalizeTimestampMs(normalized.startAtMs)
+				);
+				continue;
+			}
+			
 			const markdown = input.renderMarkdown(normalized);
 			const upsertResult = await input.upsertNote({
 				vault: input.vault,
