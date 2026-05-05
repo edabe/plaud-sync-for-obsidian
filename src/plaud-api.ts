@@ -19,6 +19,7 @@ export interface PlaudFileSummary {
 	file_id?: string;
 	is_trash?: boolean;
 	start_time?: number;
+	edit_time?: number;
 }
 
 export interface PlaudFileDetail {
