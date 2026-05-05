@@ -108,12 +108,17 @@ export function shouldSyncFile(summary: PlaudFileSummary, lastSyncAtMs: number):
 		return true;
 	}
 
-	const startAtMs = normalizeTimestampMs(summary.start_time);
-	if (startAtMs === 0) {
+	// Use edit_time to determine if file has changed
+	// edit_time is in seconds, convert to milliseconds
+	// This covers both new recordings and transcribed/modified notes
+	const editTimeSeconds = normalizeTimestampMs(summary.edit_time);
+	if (editTimeSeconds === 0) {
+		// If edit_time is missing, sync it to be safe
 		return true;
 	}
 
-	return startAtMs > checkpoint;
+	const editTimeMs = editTimeSeconds * 1000;
+	return editTimeMs > checkpoint;
 }
 
 export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncSummary> {
@@ -149,11 +154,11 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 			// Skip notes without transcription if the setting is enabled
 			if (input.settings.excludeWithoutTranscript && !normalized.transcript.trim()) {
 				skipped += 1;
-				checkpointCandidate = Math.max(
-					checkpointCandidate,
-					normalizeTimestampMs(summary.start_time),
-					normalizeTimestampMs(normalized.startAtMs)
-				);
+				// Update checkpoint using edit_time
+				const editTimeSeconds = normalizeTimestampMs(summary.edit_time);
+				if (editTimeSeconds > 0) {
+					checkpointCandidate = Math.max(checkpointCandidate, editTimeSeconds * 1000);
+				}
 				continue;
 			}
 			
@@ -183,11 +188,11 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 				skipped += 1;
 			}
 
-			checkpointCandidate = Math.max(
-				checkpointCandidate,
-				normalizeTimestampMs(summary.start_time),
-				normalizeTimestampMs(normalized.startAtMs)
-			);
+			// Update checkpoint using edit_time
+			const editTimeSeconds = normalizeTimestampMs(summary.edit_time);
+			if (editTimeSeconds > 0) {
+				checkpointCandidate = Math.max(checkpointCandidate, editTimeSeconds * 1000);
+			}
 		} catch (error) {
 			failed += 1;
 			failures.push({
