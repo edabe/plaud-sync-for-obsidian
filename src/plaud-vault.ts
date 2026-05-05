@@ -69,7 +69,7 @@ function extractFrontmatter(content: string): string {
 	return content.slice(4, closing);
 }
 
-function extractFrontmatterFileId(content: string): string {
+export function extractFrontmatterFileId(content: string): string {
 	const frontmatter = extractFrontmatter(content);
 	if (!frontmatter) {
 		return '';
@@ -81,6 +81,53 @@ function extractFrontmatterFileId(content: string): string {
 		return '';
 	}
 
+	const startsWithDouble = raw.startsWith('"');
+	const endsWithDouble = raw.endsWith('"');
+	if (startsWithDouble && endsWithDouble && raw.length >= 2) {
+		return raw.slice(1, -1).trim();
+	}
+
+	const startsWithSingle = raw.startsWith("'");
+	const endsWithSingle = raw.endsWith("'");
+	if (startsWithSingle && endsWithSingle && raw.length >= 2) {
+		return raw.slice(1, -1).trim();
+	}
+
+	return raw;
+}
+
+export function extractFolderFromPath(path: string, baseFolder: string): string {
+	// Remove base folder and filename to get the subfolder
+	const normalized = path.replace(/\/+$/, '');
+	const baseFolderNormalized = baseFolder.replace(/\/+$/, '');
+	
+	if (!normalized.startsWith(baseFolderNormalized + '/')) {
+		return ''; // File is in base folder, no subfolder
+	}
+	
+	const relativePath = normalized.substring(baseFolderNormalized.length + 1);
+	const lastSlash = relativePath.lastIndexOf('/');
+	
+	if (lastSlash === -1) {
+		return ''; // File is directly in base folder
+	}
+	
+	return relativePath.substring(0, lastSlash);
+}
+
+export function extractFrontmatterFolder(content: string): string {
+	const frontmatter = extractFrontmatter(content);
+	if (!frontmatter) {
+		return '';
+	}
+
+	const match = frontmatter.match(/^plaud_folder:\s*(.+)$/m);
+	const raw = match?.[1]?.trim() ?? '';
+	if (!raw) {
+		return '';
+	}
+
+	// Remove quotes if present
 	const startsWithDouble = raw.startsWith('"');
 	const endsWithDouble = raw.endsWith('"');
 	if (startsWithDouble && endsWithDouble && raw.length >= 2) {
