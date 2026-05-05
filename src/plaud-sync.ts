@@ -202,11 +202,17 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	}
 
 	// Detect missing files (exist in Plaud but not in vault)
+	// Only check files that have an actual file_id (not just id fallback)
 	const missingFileIds = new Set<string>();
 	for (const file of listed) {
 		if (isTrashedFile(file)) continue; // Skip trashed files
 		
-		const fileId = resolveFileId(file);
+		// Only check files with explicit file_id (not id fallback)
+		if (typeof file.file_id !== 'string' || file.file_id.trim().length === 0) {
+			continue;
+		}
+		
+		const fileId = file.file_id.trim();
 		if (!existingFileIds.has(fileId)) {
 			missingFileIds.add(fileId);
 		}
