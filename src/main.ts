@@ -265,10 +265,8 @@ export default class PlaudSyncPlugin extends Plugin {
 			listFiletags: async () => this.retryApiCall('sync.list_filetags', async () => api.listFiletags())
 		};
 
-		// Create progress reporter for manual syncs only
-		const progress = trigger === 'manual'
-			? new ObsidianProgressReporter('Plaud sync', this.statusBarItem)
-			: new NoOpProgressReporter();
+		// Create progress reporter for all syncs (both manual and startup)
+		const progress = new ObsidianProgressReporter('Plaud sync', this.statusBarItem);
 
 		return runPlaudSync({
 			api: resilientApi,
