@@ -131,9 +131,10 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	try {
 		const filetags = await input.api.listFiletags();
 		filetagMap = new Map(filetags.map((tag: PlaudFiletag) => [tag.id, tag.name]));
+		console.log(`[plaud-sync] Fetched ${filetags.length} folders from Plaud`);
 	} catch (error) {
 		// If filetags fetch fails, continue without folder support
-		console.warn('Failed to fetch Plaud folders:', error);
+		console.warn('[plaud-sync] Failed to fetch Plaud folders:', error);
 	}
 
 	let created = 0;
@@ -165,6 +166,10 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 			// Resolve folder name from filetag ID
 			const folderName = normalized.filetagId ? filetagMap.get(normalized.filetagId) : undefined;
 			
+			if (normalized.filetagId && !folderName) {
+				console.warn(`[plaud-sync] File ${fileId} has filetag_id ${normalized.filetagId} but folder not found in map`);
+			}
+			
 			const markdown = input.renderMarkdown(normalized, folderName);
 			const upsertResult = await input.upsertNote({
 				vault: input.vault,
@@ -195,17 +200,21 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 			}
 		} catch (error) {
 			failed += 1;
+			const errorMsg = toErrorMessage(error);
 			failures.push({
 				fileId,
-				message: toErrorMessage(error)
+				message: errorMsg
 			});
+			console.error(`[plaud-sync] Failed to sync file ${fileId}:`, errorMsg);
 		}
 	}
 
 	let checkpointAfter = checkpointBefore;
-	if (failed === 0 && checkpointCandidate > checkpointBefore) {
+	// Save checkpoint even if there were failures, as long as we made progress
+	if (checkpointCandidate > checkpointBefore) {
 		await input.saveCheckpoint(checkpointCandidate);
 		checkpointAfter = checkpointCandidate;
+		console.log(`[plaud-sync] Checkpoint advanced from ${new Date(checkpointBefore).toISOString()} to ${new Date(checkpointAfter).toISOString()}`);
 	}
 
 	return {
