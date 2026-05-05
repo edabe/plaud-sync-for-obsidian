@@ -4,6 +4,7 @@ import type {PlaudVaultAdapter, UpsertPlaudNoteResult} from './plaud-vault';
 import {extractFolderFromPath, extractFrontmatterFolder, extractFrontmatterFileId} from './plaud-vault';
 import type {ProgressReporter} from './progress-reporter';
 import {NoOpProgressReporter} from './progress-reporter';
+import {processBatch} from './batch-processor';
 
 export interface PlaudSyncSettings {
 	syncFolder: string;
@@ -11,6 +12,7 @@ export interface PlaudSyncSettings {
 	updateExisting: boolean;
 	excludeWithoutTranscript: boolean;
 	lastSyncAtMs: number;
+	batchConcurrency?: number; // Number of concurrent API requests (default: 5)
 }
 
 export interface PlaudSyncFailure {
@@ -241,28 +243,27 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	let checkpointCandidate = checkpointBefore;
 	const failures: PlaudSyncFailure[] = [];
 
-	for (let i = 0; i < selected.length; i++) {
-		const summary = selected[i];
-		if (!summary) continue;
-		
-		const fileId = resolveFileId(summary);
-		
-		// Report progress
-		progress.report(i + 1, selected.length, `Processing note ${i + 1}/${selected.length}`);
-
-		try {
+	// Process files in batches with concurrency control
+	const concurrency = input.settings.batchConcurrency || 5;
+	console.log(`[plaud-sync] Processing ${selected.length} files with concurrency ${concurrency}`);
+	
+	const batchResult = await processBatch(selected, {
+		concurrency,
+		processItem: async (summary, index) => {
+			const fileId = resolveFileId(summary);
+			
+			// Fetch and process file detail
 			const detail = await input.api.getFileDetail(fileId);
 			const normalized = input.normalizeDetail(detail);
 			
 			// Skip notes without transcription if the setting is enabled
 			if (input.settings.excludeWithoutTranscript && !normalized.transcript.trim()) {
-				skipped += 1;
-				// Update checkpoint using edit_time
-				const editTimeSeconds = normalizeTimestampMs(summary.edit_time);
-				if (editTimeSeconds > 0) {
-					checkpointCandidate = Math.max(checkpointCandidate, editTimeSeconds * 1000);
-				}
-				continue;
+				return {
+					action: 'skipped' as const,
+					fileId,
+					summary,
+					reason: 'no_transcript'
+				};
 			}
 			
 			// Resolve folder name from filetag ID
@@ -285,23 +286,17 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 				folderName
 			});
 
-			if (upsertResult.action === 'created') {
-				created += 1;
-			} else if (upsertResult.action === 'updated') {
-				updated += 1;
-			} else if (upsertResult.action === 'renamed') {
-				renamed += 1;
-			} else {
-				skipped += 1;
-			}
-
-			// Update checkpoint using edit_time
-			const editTimeSeconds = normalizeTimestampMs(summary.edit_time);
-			if (editTimeSeconds > 0) {
-				checkpointCandidate = Math.max(checkpointCandidate, editTimeSeconds * 1000);
-			}
-		} catch (error) {
-			failed += 1;
+			return {
+				action: upsertResult.action,
+				fileId,
+				summary
+			};
+		},
+		onProgress: (completed, total) => {
+			progress.report(completed, total, `Processing note ${completed}/${total}`);
+		},
+		onError: (error, summary) => {
+			const fileId = resolveFileId(summary);
 			const errorMsg = toErrorMessage(error);
 			failures.push({
 				fileId,
@@ -309,7 +304,30 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 			});
 			console.error(`[plaud-sync] Failed to sync file ${fileId}:`, errorMsg);
 		}
+	});
+
+	// Aggregate results
+	for (const result of batchResult.results) {
+		if (!result) continue;
+		
+		if (result.action === 'created') {
+			created += 1;
+		} else if (result.action === 'updated') {
+			updated += 1;
+		} else if (result.action === 'renamed') {
+			renamed += 1;
+		} else {
+			skipped += 1;
+		}
+
+		// Update checkpoint using edit_time
+		const editTimeSeconds = normalizeTimestampMs(result.summary.edit_time);
+		if (editTimeSeconds > 0) {
+			checkpointCandidate = Math.max(checkpointCandidate, editTimeSeconds * 1000);
+		}
 	}
+	
+	failed = batchResult.failureCount;
 
 	let checkpointAfter = checkpointBefore;
 	// Save checkpoint even if there were failures, as long as we made progress
