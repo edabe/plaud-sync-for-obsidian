@@ -31,22 +31,31 @@ function renderHighlights(highlights: string[]): string {
 	return highlights.map((highlight) => `- ${highlight}`).join('\n');
 }
 
-export function renderPlaudMarkdown(detail: NormalizedPlaudDetail): string {
+export function renderPlaudMarkdown(detail: NormalizedPlaudDetail, folderName?: string): string {
 	const title = normalizeTitle(detail.title);
 	const date = formatDate(detail.startAtMs);
 	const duration = formatDuration(detail.durationMs);
 	const summary = detail.summary.trim() || 'No summary available.';
 	const transcript = detail.transcript.trim() || 'No transcript available.';
 
-	return [
+	const frontmatter = [
 		'---',
 		'source: plaud',
 		'type: recording',
 		`file_id: ${detail.fileId}`,
 		`title: "${escapeFrontmatterValue(title)}"`,
 		`date: ${date}`,
-		`duration: ${duration}`,
-		'---',
+		`duration: ${duration}`
+	];
+
+	if (folderName && folderName.trim()) {
+		frontmatter.push(`plaud_folder: "${escapeFrontmatterValue(folderName)}"`);
+	}
+
+	frontmatter.push('---');
+
+	return [
+		...frontmatter,
 		'',
 		`# ${title}`,
 		'',

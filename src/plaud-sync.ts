@@ -1,4 +1,4 @@
-import type {PlaudApiClient, PlaudFileSummary} from './plaud-api';
+import type {PlaudApiClient, PlaudFileSummary, PlaudFiletag} from './plaud-api';
 import type {NormalizedPlaudDetail} from './plaud-normalizer';
 import type {PlaudVaultAdapter, UpsertPlaudNoteResult} from './plaud-vault';
 
@@ -34,7 +34,7 @@ export interface RunPlaudSyncInput {
 	settings: PlaudSyncSettings;
 	saveCheckpoint: (nextLastSyncAtMs: number) => Promise<void>;
 	normalizeDetail: (raw: unknown) => NormalizedPlaudDetail;
-	renderMarkdown: (detail: NormalizedPlaudDetail) => string;
+	renderMarkdown: (detail: NormalizedPlaudDetail, folderName?: string) => string;
 	upsertNote: (input: {
 		vault: PlaudVaultAdapter;
 		syncFolder: string;
@@ -44,6 +44,7 @@ export interface RunPlaudSyncInput {
 		title: string;
 		date: string;
 		markdown: string;
+		folderName?: string;
 	}) => Promise<UpsertPlaudNoteResult>;
 }
 
@@ -120,6 +121,16 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	const listed = await input.api.listFiles();
 	const selected = listed.filter((summary) => shouldSyncFile(summary, checkpointBefore));
 
+	// Fetch filetags (folders) from API
+	let filetagMap: Map<string, string> = new Map();
+	try {
+		const filetags = await input.api.listFiletags();
+		filetagMap = new Map(filetags.map((tag: PlaudFiletag) => [tag.id, tag.name]));
+	} catch (error) {
+		// If filetags fetch fails, continue without folder support
+		console.warn('Failed to fetch Plaud folders:', error);
+	}
+
 	let created = 0;
 	let updated = 0;
 	let renamed = 0;
@@ -146,7 +157,10 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 				continue;
 			}
 			
-			const markdown = input.renderMarkdown(normalized);
+			// Resolve folder name from filetag ID
+			const folderName = normalized.filetagId ? filetagMap.get(normalized.filetagId) : undefined;
+			
+			const markdown = input.renderMarkdown(normalized, folderName);
 			const upsertResult = await input.upsertNote({
 				vault: input.vault,
 				syncFolder: input.settings.syncFolder,
@@ -155,7 +169,8 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 				fileId: normalized.fileId,
 				title: normalized.title,
 				date: formatDate(normalized.startAtMs),
-				markdown
+				markdown,
+				folderName
 			});
 
 			if (upsertResult.action === 'created') {
