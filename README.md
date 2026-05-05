@@ -48,7 +48,7 @@ Plaud has no official API or developer portal. The token is a JWT session cookie
 2. Open your browser's Developer Tools (`F12` or `Cmd+Opt+I`)
 3. Go to the **Console** tab and run:
    ```js
-   localStorage.getItem("tokenstr")
+   localStorage.getItem("pld_tokenstr")
    ```
 4. Copy the full string (starts with `bearer eyJ...`)
 5. In Obsidian, open **Settings → Plaud Sync** and paste it into the **Plaud token** field
