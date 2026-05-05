@@ -204,30 +204,18 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	}
 
 	// Detect missing files (exist in Plaud but not in vault)
-	// Note: When excludeWithoutTranscript is enabled, missing file detection is disabled
-	// because we cannot reliably distinguish between:
-	// 1. Files that were never synced (no transcript)
-	// 2. Files that were synced and then deleted locally
-	// Without fetching full details for every file, which would be expensive.
-	// Trade-off: Deleted files won't be re-synced automatically when this setting is enabled.
-	// Workaround: Temporarily disable excludeWithoutTranscript to re-sync deleted files.
 	const missingFileIds = new Set<string>();
-	
-	if (!input.settings.excludeWithoutTranscript) {
-		for (const file of listed) {
-			if (isTrashedFile(file)) continue; // Skip trashed files
-			
-			const fileId = resolveFileId(file);
-			if (!existingFileIds.has(fileId)) {
-				missingFileIds.add(fileId);
-			}
-		}
+	for (const file of listed) {
+		if (isTrashedFile(file)) continue; // Skip trashed files
 		
-		if (missingFileIds.size > 0) {
-			console.log(`[plaud-sync] Found ${missingFileIds.size} files missing from vault (deleted locally)`);
+		const fileId = resolveFileId(file);
+		if (!existingFileIds.has(fileId)) {
+			missingFileIds.add(fileId);
 		}
-	} else {
-		console.log(`[plaud-sync] Missing file detection disabled (excludeWithoutTranscript is enabled)`);
+	}
+	
+	if (missingFileIds.size > 0) {
+		console.log(`[plaud-sync] Found ${missingFileIds.size} files missing from vault (deleted locally)`);
 	}
 
 	// Combine incremental sync with folder mismatch detection and missing file detection
