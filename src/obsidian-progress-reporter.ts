@@ -24,9 +24,6 @@ export class ObsidianProgressReporter implements ProgressReporter {
 		if (this.statusBarItem) {
 			this.statusBarItem.setText(statusText);
 		}
-
-		// Log to console for debugging
-		console.log(`[${this.operation}] ${current}/${total} (${percentage}%)${message ? ` - ${message}` : ''}`);
 	}
 
 	complete(message?: string): void {
@@ -39,8 +36,6 @@ export class ObsidianProgressReporter implements ProgressReporter {
 
 		// Show completion notice (auto-hide after 4 seconds)
 		new Notice(statusText, 4000);
-
-		console.log(`[${this.operation}] Complete${message ? ` - ${message}` : ''}`);
 	}
 
 	error(message: string): void {
