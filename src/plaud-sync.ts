@@ -1,6 +1,7 @@
 import type {PlaudApiClient, PlaudFileSummary, PlaudFiletag} from './plaud-api';
 import type {NormalizedPlaudDetail} from './plaud-normalizer';
 import type {PlaudVaultAdapter, UpsertPlaudNoteResult} from './plaud-vault';
+import {extractFolderFromPath, extractFrontmatterFolder, extractFrontmatterFileId} from './plaud-vault';
 
 export interface PlaudSyncSettings {
 	syncFolder: string;
@@ -121,10 +122,19 @@ export function shouldSyncFile(summary: PlaudFileSummary, lastSyncAtMs: number):
 	return editTimeMs > checkpoint;
 }
 
+function sanitizeFolderName(folderName: string): string {
+	// Same sanitization as in plaud-vault.ts
+	return folderName
+		.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/^\.+/, '')
+		.replace(/\.+$/, '');
+}
+
 export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncSummary> {
 	const checkpointBefore = normalizeTimestampMs(input.settings.lastSyncAtMs);
 	const listed = await input.api.listFiles();
-	const selected = listed.filter((summary) => shouldSyncFile(summary, checkpointBefore));
 
 	// Fetch filetags (folders) from API
 	let filetagMap: Map<string, string> = new Map();
@@ -136,6 +146,56 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 		// If filetags fetch fails, continue without folder support
 		console.warn('[plaud-sync] Failed to fetch Plaud folders:', error);
 	}
+
+	// Build Plaud's file→folder mapping
+	const plaudFolderMap = new Map<string, string>();
+	for (const file of listed) {
+		const filetagId = Array.isArray(file.filetag_id_list) && file.filetag_id_list.length > 0
+			? file.filetag_id_list[0]
+			: undefined;
+		const folderName = filetagId ? filetagMap.get(filetagId) : undefined;
+		const sanitizedFolder = folderName ? sanitizeFolderName(folderName) : '';
+		plaudFolderMap.set(file.id, sanitizedFolder);
+	}
+
+	// Scan vault for folder mismatches
+	const folderMismatchIds = new Set<string>();
+	try {
+		const vaultFiles = await input.vault.listMarkdownFiles(input.settings.syncFolder);
+		console.log(`[plaud-sync] Scanning ${vaultFiles.length} vault files for folder mismatches...`);
+		
+		for (const path of vaultFiles) {
+			try {
+				const content = await input.vault.read(path);
+				const fileId = extractFrontmatterFileId(content);
+				
+				if (!fileId) continue; // Skip files without file_id
+				
+				const currentFolder = extractFolderFromPath(path, input.settings.syncFolder);
+				const expectedFolder = plaudFolderMap.get(fileId);
+				
+				if (expectedFolder !== undefined && currentFolder !== expectedFolder) {
+					folderMismatchIds.add(fileId);
+					console.log(`[plaud-sync] Folder mismatch for ${fileId}: "${currentFolder}" → "${expectedFolder}"`);
+				}
+			} catch (error) {
+				// Skip files that can't be read
+				console.warn(`[plaud-sync] Failed to read file ${path}:`, error);
+			}
+		}
+		
+		console.log(`[plaud-sync] Found ${folderMismatchIds.size} files with folder mismatches`);
+	} catch (error) {
+		console.warn('[plaud-sync] Failed to scan vault for folder mismatches:', error);
+	}
+
+	// Combine incremental sync with folder mismatch detection
+	const selected = listed.filter((summary) => {
+		const fileId = resolveFileId(summary);
+		return shouldSyncFile(summary, checkpointBefore) || folderMismatchIds.has(fileId);
+	});
+
+	console.log(`[plaud-sync] Selected ${selected.length} files to sync (${selected.length - folderMismatchIds.size} by edit_time, ${folderMismatchIds.size} by folder mismatch)`);
 
 	let created = 0;
 	let updated = 0;
