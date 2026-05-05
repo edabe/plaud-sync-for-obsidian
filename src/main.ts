@@ -57,6 +57,7 @@ export default class PlaudSyncPlugin extends Plugin {
 	private syncRuntime: PlaudSyncRuntime | null = null;
 
 	async onload(): Promise<void> {
+		console.log('[plaud-sync] Plugin loading...');
 		await this.loadSettings();
 		this.syncRuntime = createPlaudSyncRuntime({
 			isStartupEnabled: () => this.settings.syncOnStartup,
@@ -69,6 +70,7 @@ export default class PlaudSyncPlugin extends Plugin {
 		registerPlaudCommands(this);
 		this.addSettingTab(new PlaudSettingTab(this.app, this));
 
+		console.log('[plaud-sync] Plugin loaded successfully');
 		void this.syncRuntime.runStartupSync();
 	}
 
@@ -121,10 +123,26 @@ export default class PlaudSyncPlugin extends Plugin {
 	}
 
 	private async runSync(trigger: SyncTrigger): Promise<void> {
+		console.log(`[plaud-sync] Starting ${trigger} sync...`);
 		try {
 			const summary = await this.executeSyncBatch();
+			console.log('[plaud-sync] Sync completed:', {
+				listed: summary.listed,
+				selected: summary.selected,
+				created: summary.created,
+				updated: summary.updated,
+				renamed: summary.renamed,
+				skipped: summary.skipped,
+				failed: summary.failed,
+				checkpointBefore: new Date(summary.lastSyncAtMsBefore).toISOString(),
+				checkpointAfter: new Date(summary.lastSyncAtMsAfter).toISOString()
+			});
 			if (trigger === 'manual') {
-				new Notice(formatSyncSummary(summary));
+				if (summary.selected === 0 && summary.listed > 0) {
+					new Notice(`Plaud sync: No new recordings since last sync (${summary.listed} total recordings).`);
+				} else {
+					new Notice(formatSyncSummary(summary));
+				}
 			}
 		} catch (error) {
 			this.logFailure('sync_failed', error);
