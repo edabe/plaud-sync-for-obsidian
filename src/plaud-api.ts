@@ -164,8 +164,13 @@ function extractListPayload(json: unknown): PlaudFileSummary[] {
 		throw new PlaudApiError('invalid_response', 'Plaud file list payload is malformed.');
 	}
 
-	const envelope = json as PlaudEnvelope<PlaudFileSummary[]>;
+	const envelope = json as PlaudEnvelope<PlaudFileSummary[]> & {data_file_total?: unknown};
 	assertSuccessStatusIfPresent(envelope);
+
+	// Log total count if available
+	if (typeof envelope.data_file_total === 'number') {
+		console.log(`[plaud-api] Total files in Plaud: ${envelope.data_file_total}`);
+	}
 
 	if (Array.isArray(envelope.payload)) {
 		return envelope.payload;
@@ -259,7 +264,7 @@ export function createPlaudApiClient(options: CreatePlaudApiClientOptions): Plau
 	return {
 		async listFiles(): Promise<PlaudFileSummary[]> {
 			const json = await requestJson(request, {
-				url: `${apiDomain}/file/simple/web`,
+				url: `${apiDomain}/file/simple/web?skip=0&limit=99999&is_trash=2&sort_by=start_time&is_desc=true`,
 				method: 'GET',
 				headers: {
 					Authorization: `Bearer ${token}`
