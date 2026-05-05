@@ -1,4 +1,4 @@
-import {Notice, Plugin, requestUrl, TFile} from 'obsidian';
+import {Notice, Plugin, requestUrl, TFile, TFolder} from 'obsidian';
 import {registerPlaudCommands} from './commands';
 import {type PlaudPluginSettings, normalizeSettings, toPersistedSettings} from './settings-schema';
 import {PlaudSettingTab} from './settings';
@@ -106,6 +106,66 @@ export default class PlaudSyncPlugin extends Plugin {
 			this.logFailure('validate_token_failed', error);
 			new Notice(`Plaud token validation failed: ${toActionableMessage(error)}`);
 		}
+	}
+
+	async deleteEmptyFolders(): Promise<void> {
+		const syncFolder = this.settings.syncFolder.replace(/\/+$/, '').trim() || 'Plaud';
+		
+		try {
+			let totalDeleted = 0;
+			let deletedInPass = 0;
+			
+			// Keep iterating until no more empty folders are found
+			do {
+				deletedInPass = await this.deleteEmptyFoldersPass(syncFolder);
+				totalDeleted += deletedInPass;
+			} while (deletedInPass > 0);
+			
+			if (totalDeleted === 0) {
+				new Notice('No empty folders found.');
+			} else {
+				new Notice(`Deleted ${totalDeleted} empty folder${totalDeleted === 1 ? '' : 's'}.`);
+			}
+		} catch (error) {
+			this.logFailure('delete_empty_folders_failed', error);
+			new Notice(`Failed to delete empty folders: ${toActionableMessage(error)}`);
+		}
+	}
+
+	private async deleteEmptyFoldersPass(folderPath: string): Promise<number> {
+		let deletedCount = 0;
+		const folder = this.app.vault.getAbstractFileByPath(folderPath);
+		
+		if (!folder || !(folder instanceof TFolder)) {
+			return deletedCount;
+		}
+
+		// Collect all subfolders first to avoid iterator issues during deletion
+		const subfolders: string[] = [];
+		for (const child of folder.children) {
+			if (child instanceof TFolder) {
+				subfolders.push(child.path);
+			}
+		}
+
+		// Process subfolders (depth-first)
+		for (const subfolderPath of subfolders) {
+			deletedCount += await this.deleteEmptyFoldersPass(subfolderPath);
+		}
+
+		// After processing children, check if this folder is now empty
+		// Re-fetch the folder to get updated children list
+		const updatedFolder = this.app.vault.getAbstractFileByPath(folderPath);
+		if (updatedFolder && updatedFolder instanceof TFolder && updatedFolder.children.length === 0) {
+			try {
+				await this.app.vault.delete(updatedFolder);
+				deletedCount++;
+			} catch (error) {
+				console.warn(`[plaud-sync] Failed to delete empty folder: ${folderPath}`, error);
+			}
+		}
+
+		return deletedCount;
 	}
 
 	private ensureSyncRuntime(): PlaudSyncRuntime {
