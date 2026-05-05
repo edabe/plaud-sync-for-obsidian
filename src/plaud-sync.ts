@@ -324,8 +324,14 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	failed = batchResult.failureCount;
 
 	let checkpointAfter = checkpointBefore;
-	// Save checkpoint even if there were failures, as long as we made progress
-	if (checkpointCandidate > checkpointBefore) {
+	// Save checkpoint after sync completes
+	// Use the latest edit_time from processed files, or current time if no files were processed
+	if (selected.length > 0) {
+		// If we processed files, use the max edit_time or current time (whichever is later)
+		// This ensures the checkpoint advances even if all files were skipped
+		const now = Date.now();
+		checkpointCandidate = Math.max(checkpointCandidate, now);
+		
 		progress.report(selected.length, selected.length, 'Saving checkpoint...');
 		await input.saveCheckpoint(checkpointCandidate);
 		checkpointAfter = checkpointCandidate;
