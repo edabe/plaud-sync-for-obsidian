@@ -1,18 +1,18 @@
-export const PLAUD_TOKEN_SECRET_KEY = 'plaud-sync.token';
+// Secret IDs may only contain lowercase letters, numbers and dashes.
+export const PLAUD_TOKEN_SECRET_KEY = 'plaud-sync-token';
 const PLAUD_TOKEN_FALLBACK_KEY = 'plaud-sync.token.fallback';
 
-type SecretCapableHost = {
-	getSecret?: (key: string) => Promise<string | null>;
-	setSecret?: (key: string, value: string) => Promise<void>;
-	deleteSecret?: (key: string) => Promise<void>;
+type SecretStorageLike = {
+	getSecret(id: string): string | null;
+	setSecret(id: string, secret: string): void;
 };
 
-type LocalStorageCapableHost = {
+// Older Obsidian versions have no secretStorage, or no local storage API.
+export type SecretStoreHost = {
+	secretStorage?: SecretStorageLike;
 	loadLocalStorage?: (key: string) => unknown;
 	saveLocalStorage?: (key: string, data: unknown) => void;
 };
-
-export type SecretStoreHost = SecretCapableHost & LocalStorageCapableHost;
 
 function normalizeToken(value: unknown): string | null {
 	if (typeof value !== 'string') {
@@ -23,26 +23,41 @@ function normalizeToken(value: unknown): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
-function hasSecretApi(host: SecretStoreHost): host is Required<Pick<SecretStoreHost, 'getSecret' | 'setSecret' | 'deleteSecret'>> {
-	return typeof host.getSecret === 'function'
-		&& typeof host.setSecret === 'function'
-		&& typeof host.deleteSecret === 'function';
+function loadFallbackToken(host: SecretStoreHost): string | null {
+	return normalizeToken(host.loadLocalStorage?.(PLAUD_TOKEN_FALLBACK_KEY));
 }
 
-function hasLocalStorageApi(host: SecretStoreHost): host is Required<Pick<SecretStoreHost, 'loadLocalStorage' | 'saveLocalStorage'>> {
-	return typeof host.loadLocalStorage === 'function' && typeof host.saveLocalStorage === 'function';
+function clearFallbackToken(host: SecretStoreHost): void {
+	host.saveLocalStorage?.(PLAUD_TOKEN_FALLBACK_KEY, null);
+}
+
+function migrateFallbackToken(host: SecretStoreHost, storage: SecretStorageLike, token: string): void {
+	try {
+		storage.setSecret(PLAUD_TOKEN_SECRET_KEY, token);
+		clearFallbackToken(host);
+	} catch (error) {
+		// Keep the fallback copy so the token still works, and retry on the next read.
+		console.warn('[plaud-sync] Failed to move token to secret storage:', error);
+	}
 }
 
 export async function getPlaudToken(host: SecretStoreHost): Promise<string | null> {
-	if (hasSecretApi(host)) {
-		return normalizeToken(await host.getSecret(PLAUD_TOKEN_SECRET_KEY));
+	const storage = host.secretStorage;
+	if (!storage) {
+		return loadFallbackToken(host);
 	}
 
-	if (hasLocalStorageApi(host)) {
-		return normalizeToken(host.loadLocalStorage(PLAUD_TOKEN_FALLBACK_KEY));
+	const secret = normalizeToken(storage.getSecret(PLAUD_TOKEN_SECRET_KEY));
+	if (secret) {
+		return secret;
 	}
 
-	return null;
+	const fallbackToken = loadFallbackToken(host);
+	if (fallbackToken) {
+		migrateFallbackToken(host, storage, fallbackToken);
+	}
+
+	return fallbackToken;
 }
 
 export async function setPlaudToken(host: SecretStoreHost, token: string): Promise<void> {
@@ -51,12 +66,13 @@ export async function setPlaudToken(host: SecretStoreHost, token: string): Promi
 		throw new Error('Plaud token cannot be empty. Paste a valid token string.');
 	}
 
-	if (hasSecretApi(host)) {
-		await host.setSecret(PLAUD_TOKEN_SECRET_KEY, normalizedToken);
+	if (host.secretStorage) {
+		host.secretStorage.setSecret(PLAUD_TOKEN_SECRET_KEY, normalizedToken);
+		clearFallbackToken(host);
 		return;
 	}
 
-	if (hasLocalStorageApi(host)) {
+	if (host.saveLocalStorage) {
 		host.saveLocalStorage(PLAUD_TOKEN_FALLBACK_KEY, normalizedToken);
 		return;
 	}
@@ -65,12 +81,7 @@ export async function setPlaudToken(host: SecretStoreHost, token: string): Promi
 }
 
 export async function clearPlaudToken(host: SecretStoreHost): Promise<void> {
-	if (hasSecretApi(host)) {
-		await host.deleteSecret(PLAUD_TOKEN_SECRET_KEY);
-		return;
-	}
-
-	if (hasLocalStorageApi(host)) {
-		host.saveLocalStorage(PLAUD_TOKEN_FALLBACK_KEY, null);
-	}
+	// Secret storage has no delete method, so overwrite the value instead.
+	host.secretStorage?.setSecret(PLAUD_TOKEN_SECRET_KEY, '');
+	clearFallbackToken(host);
 }
