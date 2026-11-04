@@ -24,7 +24,7 @@ Sync your [Plaud](https://plaud.ai/) voice recordings into Markdown notes inside
 - **Secure token storage** — stores your Plaud session token via Obsidian's Secret Storage API (local fallback if unavailable)
 - **Retry with backoff** — transient failures (network, rate-limit, 5xx) are retried automatically; permanent failures (auth, bad response) are surfaced immediately
 - **Robust error handling** — detailed logging and error messages for troubleshooting
-- **Content hydration** — fetches full transcript and AI summary content from Plaud's signed URLs
+- **Content hydration** — fetches full transcript and AI summary content from Plaud's signed URLs; if a download fails, the existing note is left untouched and retried on the next sync
 - **Scalable** — efficiently handles 1000+ recordings with minimal overhead
 
 ## Requirements
@@ -55,18 +55,16 @@ Restart Obsidian and enable **Plaud Sync** under **Settings → Community plugin
 
 ## Obtaining your token
 
-Plaud has no official API or developer portal. The token is a JWT session cookie stored in your browser when you use the Plaud web app.
+This plugin calls the same API as the Plaud 4.0 web app, so it uses a token from your web session.
 
 1. Open [web.plaud.ai](https://web.plaud.ai/) and log in
 2. Open your browser's Developer Tools (`F12` or `Cmd+Opt+I`)
-3. Go to the **Console** tab and run:
-   ```js
-   localStorage.getItem("pld_tokenstr")
-   ```
-4. Copy the full string (starts with `bearer eyJ...`)
-5. In Obsidian, open **Settings → Plaud Sync** and paste it into the **Plaud token** field
+3. Go to the **Network** tab and reload the page
+4. Select a request to `api.plaud.ai` (or your regional host), such as `recordings/all`
+5. Under **Request Headers**, copy the value of `Authorization`
+6. In Obsidian, open **Settings → Plaud Sync** and paste it into the **Plaud token** field
 
-The token is long-lived (~10 months) but will eventually expire. When it does, repeat these steps.
+These tokens are short-lived, about a day at most. When one expires, repeat these steps.
 
 ## Configuration
 
@@ -95,7 +93,7 @@ Open the command palette (`Ctrl/Cmd+P`) and search for:
 
 ### How sync works
 
-1. **Fetch metadata** — Retrieves folder list and recording list from Plaud (up to 99,999 recordings)
+1. **Fetch metadata** — Retrieves the recording list, including each recording's folder, from Plaud
 2. **Detect changes** — Identifies recordings that changed (via `edit_time`) or have folder mismatches
 3. **Filter** — Excludes trashed recordings and optionally recordings without transcription
 4. **Fetch details** — For each selected recording, fetches full detail + content (transcript, AI summary)
@@ -126,11 +124,13 @@ If you have many recordings without transcripts and want faster syncs, consider 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "Plaud token missing…" | Token not set or cleared | Re-paste token in settings, then run **Plaud: validate token** |
-| "authentication failed…" | Expired or invalid token | Extract a fresh token from the web app |
+| "authentication failed…" | Expired or invalid token | Copy a fresh token from the web app |
+| "Your Plaud account is in another region…" | **API domain** doesn't match your account | Set **API domain** to the host named in the message |
 | "rate limited by Plaud API…" | Too many requests | Wait a few minutes and retry; avoid rapid manual syncs |
 | "network error…" | Connectivity / DNS / VPN issue | Check your connection and retry |
 | "Plaud API is temporarily unavailable…" | Plaud servers down (5xx) | Retry later |
-| "unexpected API response format…" | Plaud changed their API | Check for a plugin update; open an issue if none exists |
+| "Account migrated to 4.0…" | You're running a plugin version older than the Plaud 4.0 update | Update the plugin |
+| "…payload is malformed" or "…unrecognized format" | Plaud changed their API | Check for a plugin update; open an issue if none exists |
 | "Unable to create Plaud sync folder…" | Invalid path or vault permissions | Use a simple folder name; check vault write access |
 
 ## Development

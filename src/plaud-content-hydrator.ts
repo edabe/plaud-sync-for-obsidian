@@ -59,6 +59,21 @@ function hasSummary(detail: Record<string, unknown>): boolean {
 	return false;
 }
 
+function isEmptyContent(content: unknown): boolean {
+	if (typeof content === 'string') {
+		return content.trim().length === 0;
+	}
+	if (Array.isArray(content)) {
+		return content.length === 0;
+	}
+	if (isRecord(content)) {
+		const segments = content.trans_result ?? content.segments;
+		return Array.isArray(segments) && segments.length === 0;
+	}
+
+	return content === null || content === undefined;
+}
+
 function pickContentLink(detail: Record<string, unknown>, dataType: string): string {
 	const contentList = Array.isArray(detail.content_list) ? detail.content_list : [];
 	for (const item of contentList) {
@@ -149,6 +164,12 @@ function applyTranscriptContent(detail: Record<string, unknown>, content: unknow
 		return;
 	}
 
+	const segments = content.trans_result ?? content.segments;
+	if (Array.isArray(segments)) {
+		detail.transcript = segments;
+		return;
+	}
+
 	detail.trans_result = content;
 }
 
@@ -158,14 +179,15 @@ export async function hydratePlaudDetailContent(
 ): Promise<Record<string, unknown>> {
 	const detail: Record<string, unknown> = {...rawDetail};
 
+	// A failed download must fail this recording. Carrying on would overwrite an
+	// existing note with an empty summary or transcript.
 	if (!hasSummary(detail)) {
 		const summaryLink = pickContentLink(detail, 'auto_sum_note');
 		if (summaryLink) {
-			try {
-				const content = await fetchContent(summaryLink);
-				applySummaryContent(detail, content);
-			} catch {
-				// best-effort enrichment only
+			const content = await fetchContent(summaryLink);
+			applySummaryContent(detail, content);
+			if (!hasSummary(detail) && !isEmptyContent(content)) {
+				throw new Error('Plaud summary content had an unrecognized format.');
 			}
 		}
 	}
@@ -173,11 +195,10 @@ export async function hydratePlaudDetailContent(
 	if (!hasTranscript(detail)) {
 		const transcriptLink = pickContentLink(detail, 'transaction');
 		if (transcriptLink) {
-			try {
-				const content = await fetchContent(transcriptLink);
-				applyTranscriptContent(detail, content);
-			} catch {
-				// best-effort enrichment only
+			const content = await fetchContent(transcriptLink);
+			applyTranscriptContent(detail, content);
+			if (!hasTranscript(detail) && !isEmptyContent(content)) {
+				throw new Error('Plaud transcript content had an unrecognized format.');
 			}
 		}
 	}

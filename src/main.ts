@@ -38,7 +38,7 @@ function toActionableMessage(error: unknown): string {
 			return 'Plaud API is temporarily unavailable. Retry shortly.';
 		}
 		if (error.category === 'invalid_response') {
-			return 'unexpected API response format. Retry and inspect logs if it persists.';
+			return sanitizeTelemetryMessage(error.message);
 		}
 	}
 
@@ -186,7 +186,7 @@ export default class PlaudSyncPlugin extends Plugin {
 		const updatedFolder = this.app.vault.getAbstractFileByPath(folderPath);
 		if (updatedFolder && updatedFolder instanceof TFolder && updatedFolder.children.length === 0) {
 			try {
-				await this.app.vault.delete(updatedFolder);
+				await this.app.fileManager.trashFile(updatedFolder);
 				deletedCount++;
 			} catch (error) {
 				console.warn(`[plaud-sync] Failed to delete empty folder: ${folderPath}`, error);
@@ -261,8 +261,7 @@ export default class PlaudSyncPlugin extends Plugin {
 				}
 
 				return detail;
-			},
-			listFiletags: async () => this.retryApiCall('sync.list_filetags', async () => api.listFiletags())
+			}
 		};
 
 		// Create progress reporter for all syncs (both manual and startup)
@@ -330,11 +329,7 @@ export default class PlaudSyncPlugin extends Plugin {
 			throw new Error(`Signed content fetch failed with HTTP ${response.status}.`);
 		}
 
-		const parsedJson: unknown = (response as {json?: unknown}).json;
-		if (parsedJson !== null && parsedJson !== undefined) {
-			return parsedJson;
-		}
-
+		// Summaries are Markdown, so read the text rather than the JSON response field.
 		const text = typeof response.text === 'string' ? response.text.trim() : '';
 		if (!text) {
 			return '';

@@ -1,4 +1,4 @@
-import type {PlaudApiClient, PlaudFileSummary, PlaudFiletag} from './plaud-api';
+import type {PlaudApiClient, PlaudFileSummary} from './plaud-api';
 import type {NormalizedPlaudDetail} from './plaud-normalizer';
 import type {PlaudVaultAdapter, UpsertPlaudNoteResult} from './plaud-vault';
 import {extractFolderFromPath, extractFrontmatterFolder, extractFrontmatterFileId} from './plaud-vault';
@@ -144,26 +144,10 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	progress.report(0, 0, 'Fetching file list from Plaud...');
 	const listed = await input.api.listFiles();
 
-	// Fetch filetags (folders) from API
-	progress.report(0, 0, 'Fetching folders from Plaud...');
-	let filetagMap: Map<string, string> = new Map();
-	try {
-		const filetags = await input.api.listFiletags();
-		filetagMap = new Map(filetags.map((tag: PlaudFiletag) => [tag.id, tag.name]));
-		console.log(`[plaud-sync] Fetched ${filetags.length} folders from Plaud`);
-	} catch (error) {
-		// If filetags fetch fails, continue without folder support
-		console.warn('[plaud-sync] Failed to fetch Plaud folders:', error);
-	}
-
 	// Build Plaud's file→folder mapping
 	const plaudFolderMap = new Map<string, string>();
 	for (const file of listed) {
-		const filetagId = Array.isArray(file.filetag_id_list) && file.filetag_id_list.length > 0
-			? file.filetag_id_list[0]
-			: undefined;
-		const folderName = filetagId ? filetagMap.get(filetagId) : undefined;
-		const sanitizedFolder = folderName ? sanitizeFolderName(folderName) : '';
+		const sanitizedFolder = file.folder_name ? sanitizeFolderName(file.folder_name) : '';
 		plaudFolderMap.set(file.id, sanitizedFolder);
 	}
 
@@ -260,13 +244,7 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 				};
 			}
 			
-			// Resolve folder name from filetag ID
-			const folderName = normalized.filetagId ? filetagMap.get(normalized.filetagId) : undefined;
-			
-			if (normalized.filetagId && !folderName) {
-				console.warn(`[plaud-sync] File ${fileId} has filetag_id ${normalized.filetagId} but folder not found in map`);
-			}
-			
+			const folderName = summary.folder_name;
 			const markdown = input.renderMarkdown(normalized, folderName);
 			const upsertResult = await input.upsertNote({
 				vault: input.vault,
@@ -326,7 +304,8 @@ export async function runPlaudSync(input: RunPlaudSyncInput): Promise<PlaudSyncS
 	let checkpointAfter = checkpointBefore;
 	// Save checkpoint after sync completes
 	// Use the latest edit_time from processed files, or current time if no files were processed
-	if (selected.length > 0) {
+	// Hold it back after a failure so the failed recordings are retried on the next sync
+	if (selected.length > 0 && failed === 0) {
 		// If we processed files, use the max edit_time or current time (whichever is later)
 		// This ensures the checkpoint advances even if all files were skipped
 		const now = Date.now();

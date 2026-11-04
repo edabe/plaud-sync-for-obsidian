@@ -20,30 +20,14 @@ export interface PlaudFileSummary {
 	is_trash?: boolean;
 	start_time?: number;
 	edit_time?: number;
-	filetag_id_list?: string[];
+	folder_name?: string;
 }
 
 export interface PlaudFileDetail {
 	id: string;
 	file_id?: string;
-	filetag_id_list?: string[];
 	[key: string]: unknown;
 }
-
-export interface PlaudFiletag {
-	id: string;
-	name: string;
-	icon?: string;
-	color?: string;
-}
-
-type PlaudEnvelope<T> = {
-	status?: unknown;
-	msg?: unknown;
-	payload?: T;
-	data?: unknown;
-	data_file_list?: unknown;
-};
 
 export type PlaudRequest = {
 	url: string;
@@ -58,7 +42,6 @@ export type PlaudRequestFn = (request: PlaudRequest) => Promise<PlaudRequestResu
 export interface PlaudApiClient {
 	listFiles(): Promise<PlaudFileSummary[]>;
 	getFileDetail(fileId: string): Promise<PlaudFileDetail>;
-	listFiletags(): Promise<PlaudFiletag[]>;
 }
 
 export interface CreatePlaudApiClientOptions {
@@ -66,6 +49,15 @@ export interface CreatePlaudApiClientOptions {
 	token: string;
 	request: PlaudRequestFn;
 }
+
+const V4_BASE_PATH = '/file-app/v4';
+const LIST_PAGE_SIZE = 1000;
+const MAX_LIST_PAGES = 1000;
+const LEGACY_ID_PATTERN = /^[0-9a-f]{32}$/;
+
+// Plaud answers these with HTTP 200, so they need mapping to the auth category.
+const AUTH_ERROR_STATUSES = new Set([-3900, -420, -419]);
+const REGION_REDIRECT_STATUS = -302;
 
 function normalizeDomain(domain: string): string {
 	return domain.trim().replace(/\/+$/, '');
@@ -119,14 +111,28 @@ function mapStatusCategory(status: number): PlaudApiErrorCategory {
 	return 'network';
 }
 
-function assertSuccessStatusIfPresent(envelope: PlaudEnvelope<unknown>): void {
-	if (!('status' in envelope)) {
+function regionRedirectMessage(envelope: Record<string, unknown>): string {
+	const data = isRecord(envelope.data) ? envelope.data : {};
+	const domains = isRecord(data.domains) ? data.domains : {};
+	const api = typeof domains.api === 'string' ? domains.api.trim() : '';
+	return api
+		? `Your Plaud account is in another region. Set API domain to ${api} in settings.`
+		: 'Your Plaud account is in another region. Update API domain in settings.';
+}
+
+function assertSuccessStatus(envelope: Record<string, unknown>): void {
+	const status = envelope.status;
+	if (isSuccessStatus(status)) {
 		return;
 	}
 
-	if (!isSuccessStatus(envelope.status)) {
-		throw new PlaudApiError('invalid_response', toErrorMessage(envelope.msg, 'Plaud API returned non-success status.'));
+	if (status === REGION_REDIRECT_STATUS) {
+		throw new PlaudApiError('invalid_response', regionRedirectMessage(envelope));
 	}
+
+	const message = toErrorMessage(envelope.msg, 'Plaud API returned non-success status.');
+	const category = typeof status === 'number' && AUTH_ERROR_STATUSES.has(status) ? 'auth' : 'invalid_response';
+	throw new PlaudApiError(category, message);
 }
 
 async function requestJson(
@@ -155,105 +161,139 @@ async function requestJson(
 	return response.json;
 }
 
-function extractListPayload(json: unknown): PlaudFileSummary[] {
-	if (Array.isArray(json)) {
-		return json as PlaudFileSummary[];
-	}
-
-	if (!isRecord(json)) {
-		throw new PlaudApiError('invalid_response', 'Plaud file list payload is malformed.');
-	}
-
-	const envelope = json as PlaudEnvelope<PlaudFileSummary[]> & {data_file_total?: unknown};
-	assertSuccessStatusIfPresent(envelope);
-
-	// Log total count if available
-	if (typeof envelope.data_file_total === 'number') {
-		console.log(`[plaud-api] Total files in Plaud: ${envelope.data_file_total}`);
-	}
-
-	if (Array.isArray(envelope.payload)) {
-		return envelope.payload;
-	}
-
-	if (Array.isArray(envelope.data_file_list)) {
-		return envelope.data_file_list as PlaudFileSummary[];
-	}
-
-	if (Array.isArray(envelope.data)) {
-		return envelope.data as PlaudFileSummary[];
-	}
-
-	throw new PlaudApiError('invalid_response', 'Plaud file list payload must be an array.');
+// Recordings made before the 4.0 migration are `of_<legacy id>`. Notes keep the
+// legacy id in frontmatter, so it stays the plugin's identifier for them.
+function toNoteFileId(v4FileId: string): string {
+	return v4FileId.replace(/^of_/, '');
 }
 
-function extractFiletagListPayload(json: unknown): PlaudFiletag[] {
-	if (Array.isArray(json)) {
-		return json as PlaudFiletag[];
-	}
-
-	if (!isRecord(json)) {
-		throw new PlaudApiError('invalid_response', 'Plaud filetag list payload is malformed.');
-	}
-
-	const envelope = json as PlaudEnvelope<PlaudFiletag[]> & {data_filetag_list?: unknown};
-	assertSuccessStatusIfPresent(envelope);
-
-	if (Array.isArray(envelope.payload)) {
-		return envelope.payload;
-	}
-
-	if (Array.isArray(envelope.data_filetag_list)) {
-		return envelope.data_filetag_list as PlaudFiletag[];
-	}
-
-	if (Array.isArray(envelope.data)) {
-		return envelope.data as PlaudFiletag[];
-	}
-
-	throw new PlaudApiError('invalid_response', 'Plaud filetag list payload must be an array.');
+function toV4FileId(noteFileId: string): string {
+	return LEGACY_ID_PATTERN.test(noteFileId) ? `of_${noteFileId}` : noteFileId;
 }
 
-function normalizeFileDetail(raw: unknown): PlaudFileDetail {
-	if (!isRecord(raw)) {
-		throw new PlaudApiError('invalid_response', 'Plaud file detail payload is malformed.');
-	}
-
-	const detail: Record<string, unknown> = {...raw};
-	const id = typeof detail.id === 'string' ? detail.id.trim() : '';
-	const fileId = typeof detail.file_id === 'string' ? detail.file_id.trim() : '';
-
-	if (!id && fileId) {
-		detail.id = fileId;
-	}
-	if (!fileId && typeof detail.id === 'string' && detail.id.trim()) {
-		detail.file_id = detail.id.trim();
-	}
-
-	if (typeof detail.id !== 'string' || detail.id.trim().length === 0) {
-		throw new PlaudApiError('invalid_response', 'Plaud file detail payload is malformed.');
-	}
-
-	return detail as PlaudFileDetail;
+function readNumber(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function extractDetailPayload(json: unknown): PlaudFileDetail {
+function readString(value: unknown): string {
+	return typeof value === 'string' ? value.trim() : '';
+}
+
+function unwrapData(json: unknown, malformedMessage: string): Record<string, unknown> {
 	if (!isRecord(json)) {
-		throw new PlaudApiError('invalid_response', 'Plaud file detail payload is malformed.');
+		throw new PlaudApiError('invalid_response', malformedMessage);
 	}
 
-	const envelope = json as PlaudEnvelope<PlaudFileDetail>;
-	assertSuccessStatusIfPresent(envelope);
+	assertSuccessStatus(json);
 
-	if (isRecord(envelope.payload)) {
-		return normalizeFileDetail(envelope.payload);
+	if (!isRecord(json.data)) {
+		throw new PlaudApiError('invalid_response', malformedMessage);
 	}
 
-	if (isRecord(envelope.data)) {
-		return normalizeFileDetail(envelope.data);
+	return json.data;
+}
+
+function readUserFolderName(parentFolder: unknown): string | undefined {
+	// Recordings outside a user folder sit in a system folder such as Recordings.
+	if (!isRecord(parentFolder) || parentFolder.system_folder_type) {
+		return undefined;
 	}
 
-	return normalizeFileDetail(json);
+	return readString(parentFolder.name) || undefined;
+}
+
+// Each recording sits in its own hidden container folder. parent_folder normally
+// skips it, except when the container's name differs from the recording's, such
+// as "Name (1)". Only then does parent_id match parent_folder.
+function hiddenContainerId(item: Record<string, unknown>): string {
+	const parentFolder = item.parent_folder;
+	if (!isRecord(parentFolder) || parentFolder.system_folder_type) {
+		return '';
+	}
+
+	const folderId = readString(parentFolder.folder_id);
+	return folderId && folderId === readString(item.parent_id) ? folderId : '';
+}
+
+function readFolderNameAboveContainer(json: unknown, containerId: string): string | undefined {
+	const data = unwrapData(json, 'Plaud file detail payload is malformed.');
+	const node = isRecord(data.node) ? data.node : {};
+	const breadcrumbs: unknown[] = Array.isArray(node.breadcrumbs) ? node.breadcrumbs : [];
+	const containerIndex = breadcrumbs.findIndex((crumb) => isRecord(crumb) && crumb.node_id === containerId);
+
+	return containerIndex > 0 ? readUserFolderName(breadcrumbs[containerIndex - 1]) : undefined;
+}
+
+function toFileSummary(item: unknown): PlaudFileSummary | null {
+	if (!isRecord(item)) {
+		return null;
+	}
+
+	const v4FileId = readString(item.file_id);
+	if (!v4FileId) {
+		return null;
+	}
+
+	const id = toNoteFileId(v4FileId);
+	const editedAtMs = Math.max(readNumber(item.updated_at_show_ms), readNumber(item.version_ms));
+
+	return {
+		id,
+		file_id: id,
+		// recordings/all leaves out trashed recordings.
+		is_trash: false,
+		start_time: readNumber(item.created_at_show_ms),
+		edit_time: Math.ceil(editedAtMs / 1000),
+		folder_name: readUserFolderName(item.parent_folder)
+	};
+}
+
+function isFinishedContent(object: Record<string, unknown>): boolean {
+	const taskStatus = object.task_status;
+	return Boolean(readString(object.content_url)) && (taskStatus === null || taskStatus === undefined || taskStatus === 1);
+}
+
+function toContentList(objects: unknown): Array<{data_type: string; data_link: string}> {
+	const dataTypes: Record<string, string> = {
+		TRANSCRIPT: 'transaction',
+		SUMMARY: 'auto_sum_note'
+	};
+	const contentList: Array<{data_type: string; data_link: string}> = [];
+
+	for (const object of Array.isArray(objects) ? objects : []) {
+		if (!isRecord(object) || !isFinishedContent(object)) {
+			continue;
+		}
+
+		const dataType = dataTypes[readString(object.object_type)];
+		if (dataType) {
+			contentList.push({data_type: dataType, data_link: readString(object.content_url)});
+		}
+	}
+
+	return contentList;
+}
+
+function toFileDetail(json: unknown): PlaudFileDetail {
+	const malformedMessage = 'Plaud file detail payload is malformed.';
+	const data = unwrapData(json, malformedMessage);
+	const node = isRecord(data.node) ? data.node : {};
+	const meta = isRecord(data.meta) ? data.meta : {};
+
+	const v4FileId = readString(meta.file_id);
+	if (!v4FileId) {
+		throw new PlaudApiError('invalid_response', malformedMessage);
+	}
+
+	const id = toNoteFileId(v4FileId);
+	return {
+		id,
+		file_id: id,
+		file_name: readString(node.name),
+		start_time: readNumber(meta.start_time),
+		duration: readNumber(meta.duration),
+		content_list: toContentList(data.objects)
+	};
 }
 
 export function createPlaudApiClient(options: CreatePlaudApiClientOptions): PlaudApiClient {
@@ -261,44 +301,67 @@ export function createPlaudApiClient(options: CreatePlaudApiClientOptions): Plau
 	const apiDomain = normalizeDomain(options.apiDomain);
 	const token = normalizeToken(options.token);
 
+	const getJson = (path: string): Promise<unknown> => requestJson(request, {
+		url: `${apiDomain}${V4_BASE_PATH}${path}`,
+		method: 'GET',
+		headers: {
+			Authorization: `Bearer ${token}`
+		},
+		throw: false
+	});
+
 	return {
 		async listFiles(): Promise<PlaudFileSummary[]> {
-			const json = await requestJson(request, {
-				url: `${apiDomain}/file/simple/web?skip=0&limit=99999&is_trash=2&sort_by=start_time&is_desc=true`,
-				method: 'GET',
-				headers: {
-					Authorization: `Bearer ${token}`
-				},
-				throw: false
-			});
+			const files: PlaudFileSummary[] = [];
+			let cursor = '';
 
-			return extractListPayload(json);
+			for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+				const params = new URLSearchParams({
+					sort_by: 'created',
+					sort_order: 'desc',
+					page_size: String(LIST_PAGE_SIZE)
+				});
+				if (cursor) {
+					params.set('cursor', cursor);
+				}
+
+				const data = unwrapData(
+					await getJson(`/recordings/all?${params.toString()}`),
+					'Plaud file list payload is malformed.'
+				);
+				if (!Array.isArray(data.items)) {
+					throw new PlaudApiError('invalid_response', 'Plaud file list payload must include items.');
+				}
+
+				for (const item of data.items) {
+					const summary = toFileSummary(item);
+					if (!summary) {
+						continue;
+					}
+
+					const containerId = hiddenContainerId(item as Record<string, unknown>);
+					if (containerId) {
+						const v4FileId = readString((item as Record<string, unknown>).file_id);
+						summary.folder_name = readFolderNameAboveContainer(
+							await getJson(`/files/detail/${encodeURIComponent(v4FileId)}`),
+							containerId
+						);
+					}
+
+					files.push(summary);
+				}
+
+				cursor = readString(data.next_cursor);
+				if (!cursor) {
+					return files;
+				}
+			}
+
+			throw new PlaudApiError('invalid_response', 'Plaud file list did not end. Refusing a partial list.');
 		},
 
 		async getFileDetail(fileId: string): Promise<PlaudFileDetail> {
-			const json = await requestJson(request, {
-				url: `${apiDomain}/file/detail/${encodeURIComponent(fileId)}`,
-				method: 'GET',
-				headers: {
-					Authorization: `Bearer ${token}`
-				},
-				throw: false
-			});
-
-			return extractDetailPayload(json);
-		},
-
-		async listFiletags(): Promise<PlaudFiletag[]> {
-			const json = await requestJson(request, {
-				url: `${apiDomain}/filetag/`,
-				method: 'GET',
-				headers: {
-					Authorization: `Bearer ${token}`
-				},
-				throw: false
-			});
-
-			return extractFiletagListPayload(json);
+			return toFileDetail(await getJson(`/files/detail/${encodeURIComponent(toV4FileId(fileId))}`));
 		}
 	};
 }
